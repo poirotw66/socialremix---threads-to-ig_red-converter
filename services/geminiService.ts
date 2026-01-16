@@ -12,7 +12,8 @@ const getApiKey = (): string => {
     }
   }
   // Fallback to environment variable for server-side or initial load
-  return import.meta.env.VITE_API_KEY || process.env.API_KEY || '';
+  // Vite requires VITE_ prefix for client-side env vars
+  return import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY || process.env.API_KEY || '';
 };
 
 // Initialize AI client with dynamic API key

@@ -69,7 +69,7 @@ function App() {
 
   const handleGenerateTopic = async (category: TopicCategory) => {
     // Check if API key is set
-    const apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_API_KEY || '';
+    const apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY || '';
     if (!apiKey) {
       alert("Please configure your Gemini API key in Settings first.");
       setIsSettingsOpen(true);
@@ -100,7 +100,7 @@ function App() {
     if (!sourceText.trim()) return;
     
     // Check if API key is set
-    const apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_API_KEY || '';
+    const apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY || '';
     if (!apiKey) {
       alert("Please configure your Gemini API key in Settings first.");
       setIsSettingsOpen(true);
