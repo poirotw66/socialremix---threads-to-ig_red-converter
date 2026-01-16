@@ -16,6 +16,7 @@ export interface GeneratedPost {
   content: string;
   hashtags: string[];
   imagePrompt?: string;
+  imageUrl?: string; // Base64 data URL or image URL
 }
 
 export interface ConversionRequest {

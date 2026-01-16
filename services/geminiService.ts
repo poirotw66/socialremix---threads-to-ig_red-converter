@@ -1,8 +1,28 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Platform, GeneratedPost, TopicCategory } from "../types";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const API_KEY_STORAGE_KEY = 'gemini_api_key';
+
+// Get API key from localStorage or environment variable
+const getApiKey = (): string => {
+  if (typeof window !== 'undefined') {
+    const storedKey = localStorage.getItem(API_KEY_STORAGE_KEY);
+    if (storedKey) {
+      return storedKey;
+    }
+  }
+  // Fallback to environment variable for server-side or initial load
+  return import.meta.env.VITE_API_KEY || process.env.API_KEY || '';
+};
+
+// Initialize AI client with dynamic API key
+const getAI = () => {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new Error('Gemini API key is not set. Please configure it in Settings.');
+  }
+  return new GoogleGenAI({ apiKey });
+};
 
 // System instructions for different personas
 const SYSTEM_INSTRUCTION_RED = `You are a top-tier influencer on Xiaohongshu (Little Red Book). 
@@ -22,6 +42,7 @@ Your writing style is aesthetic, clean, and value-driven.
 
 export const generateTrendingTopic = async (category: TopicCategory): Promise<string> => {
   try {
+    const ai = getAI();
     const prompt = `Generate a realistic, viral-worthy discussion topic or "hot take" that might appear on Threads right now regarding "${category}". 
     It should be in Traditional Chinese (Taiwan colloquial style).
     It should be raw, conversational, and slightly controversial or very relatable. 
@@ -46,6 +67,7 @@ export const transformContent = async (
   sourceText: string,
   platform: Platform
 ): Promise<GeneratedPost> => {
+  const ai = getAI();
   const isRed = platform === Platform.XIAOHONGSHU;
   const systemInstruction = isRed ? SYSTEM_INSTRUCTION_RED : SYSTEM_INSTRUCTION_IG;
   const modelName = 'gemini-3-flash-preview';
@@ -97,5 +119,128 @@ export const transformContent = async (
   } catch (error) {
     console.error("Error transforming content:", error);
     throw new Error("Failed to transform content. Please try again.");
+  }
+};
+
+export const generateImage = async (prompt: string): Promise<string | null> => {
+  try {
+    const ai = getAI();
+    
+    // Use Gemini 2.5 Flash Image model for image generation
+    // The API structure may vary, so we try multiple approaches
+    let response: any;
+    
+    try {
+      // Try method 1: Direct content generation with image modality
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          responseModalities: ['IMAGE'],
+          temperature: 0.7,
+        }
+      });
+    } catch (e: any) {
+      // If that fails, try alternative API format
+      try {
+        response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image',
+          contents: prompt,
+          config: {
+            responseModalities: ['IMAGE'],
+          }
+        });
+      } catch (e2: any) {
+        // Try with generationConfig format
+        response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash-image',
+          contents: prompt,
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+          }
+        });
+      }
+    }
+
+    // Extract image from response - try multiple possible response structures
+    const candidates = response?.candidates || response?.data?.candidates || [];
+    if (candidates.length === 0) {
+      throw new Error('No image generated - empty response');
+    }
+
+    const content = candidates[0]?.content || candidates[0];
+    const parts = content?.parts || content?.data?.parts || [];
+    
+    // Look for image data in parts - check multiple possible formats
+    for (const part of parts) {
+      // Format 1: inlineData (base64)
+      if (part.inlineData) {
+        const mimeType = part.inlineData.mimeType || 'image/png';
+        const data = part.inlineData.data;
+        return `data:${mimeType};base64,${data}`;
+      }
+      // Format 2: inline_data (snake_case)
+      if (part.inline_data) {
+        const mimeType = part.inline_data.mime_type || part.inline_data.mimeType || 'image/png';
+        const data = part.inline_data.data;
+        return `data:${mimeType};base64,${data}`;
+      }
+      // Format 3: imageUrl
+      if (part.imageUrl) {
+        return part.imageUrl.url || part.imageUrl;
+      }
+      // Format 4: image_url
+      if (part.image_url) {
+        return part.image_url.url || part.image_url;
+      }
+      // Format 5: fileData
+      if (part.fileData) {
+        const mimeType = part.fileData.mimeType || 'image/png';
+        const data = part.fileData.fileUri || part.fileData.uri;
+        return data;
+      }
+      // Format 6: image property directly
+      if (part.image) {
+        if (typeof part.image === 'string') {
+          return part.image.startsWith('data:') ? part.image : `data:image/png;base64,${part.image}`;
+        }
+        if (part.image.data) {
+          const mimeType = part.image.mimeType || 'image/png';
+          return `data:${mimeType};base64,${part.image.data}`;
+        }
+      }
+    }
+
+    // If no image found in expected format, check if response.text contains image data
+    const text = response?.text || response?.data?.text;
+    if (text) {
+      if (text.startsWith('data:image')) {
+        return text;
+      }
+      // Sometimes base64 is returned as plain text
+      if (text.length > 100 && /^[A-Za-z0-9+/=]+$/.test(text)) {
+        return `data:image/png;base64,${text}`;
+      }
+    }
+
+    // Log the actual response structure for debugging
+    console.warn('Unexpected response structure:', JSON.stringify(response, null, 2));
+    throw new Error('Image data not found in response - unexpected format');
+  } catch (error: any) {
+    console.error("Error generating image:", error);
+    
+    // Provide more specific error messages
+    const errorMsg = error?.message || '';
+    if (errorMsg.includes('quota') || errorMsg.includes('billing') || errorMsg.includes('payment')) {
+      throw new Error('Image generation requires a paid API plan. Please upgrade your Gemini API account.');
+    }
+    if (errorMsg.includes('model') || errorMsg.includes('not found') || errorMsg.includes('not available')) {
+      throw new Error('Image generation model (gemini-2.5-flash-image) is not available. Please check your API access or try a different model.');
+    }
+    if (errorMsg.includes('permission') || errorMsg.includes('unauthorized')) {
+      throw new Error('API key does not have permission to generate images. Please check your API key permissions.');
+    }
+    
+    throw new Error(errorMsg || 'Failed to generate image. Please try again.');
   }
 };

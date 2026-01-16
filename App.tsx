@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Header } from './components/Header';
 import { PlatformSelector } from './components/PlatformSelector';
 import { ResultCard } from './components/ResultCard';
-import { generateTrendingTopic, transformContent } from './services/geminiService';
+import { SettingsModal } from './components/SettingsModal';
+import { generateTrendingTopic, transformContent, generateImage } from './services/geminiService';
 import { Platform, TopicCategory, GeneratedPost } from './types';
 
 function App() {
@@ -10,19 +11,49 @@ function App() {
   const [platform, setPlatform] = useState<Platform>(Platform.XIAOHONGSHU);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isFetchingTopic, setIsFetchingTopic] = useState(false);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [result, setResult] = useState<GeneratedPost | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const handleGenerateTopic = async (category: TopicCategory) => {
+    // Check if API key is set
+    const apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_API_KEY || '';
+    if (!apiKey) {
+      alert("Please configure your Gemini API key in Settings first.");
+      setIsSettingsOpen(true);
+      return;
+    }
+    
     setIsFetchingTopic(true);
     setSourceText(''); // Clear previous
     setResult(null);
-    const topic = await generateTrendingTopic(category);
-    setSourceText(topic);
-    setIsFetchingTopic(false);
+    
+    try {
+      const topic = await generateTrendingTopic(category);
+      setSourceText(topic);
+    } catch (e: any) {
+      const errorMessage = e?.message || "Failed to generate topic.";
+      if (errorMessage.includes('API key')) {
+        alert("API key is invalid or not set. Please check your settings.");
+        setIsSettingsOpen(true);
+      } else {
+        alert(errorMessage);
+      }
+    } finally {
+      setIsFetchingTopic(false);
+    }
   };
 
   const handleTransform = async () => {
     if (!sourceText.trim()) return;
+    
+    // Check if API key is set
+    const apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_API_KEY || '';
+    if (!apiKey) {
+      alert("Please configure your Gemini API key in Settings first.");
+      setIsSettingsOpen(true);
+      return;
+    }
     
     setIsGenerating(true);
     setResult(null);
@@ -30,8 +61,31 @@ function App() {
     try {
       const generated = await transformContent(sourceText, platform);
       setResult(generated);
-    } catch (e) {
-      alert("Something went wrong with the AI service. Please try again.");
+      
+      // Automatically generate image if imagePrompt is available
+      if (generated.imagePrompt) {
+        setIsGeneratingImage(true);
+        try {
+          const imageUrl = await generateImage(generated.imagePrompt);
+          if (imageUrl) {
+            setResult({ ...generated, imageUrl });
+          }
+        } catch (imageError: any) {
+          console.error("Image generation failed:", imageError);
+          // Don't show error alert for image generation failure, just log it
+          // The post is still usable without the image
+        } finally {
+          setIsGeneratingImage(false);
+        }
+      }
+    } catch (e: any) {
+      const errorMessage = e?.message || "Something went wrong with the AI service.";
+      if (errorMessage.includes('API key')) {
+        alert("API key is invalid or not set. Please check your settings.");
+        setIsSettingsOpen(true);
+      } else {
+        alert(errorMessage + " Please try again.");
+      }
     } finally {
       setIsGenerating(false);
     }
@@ -39,7 +93,8 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
-      <Header />
+      <Header onSettingsClick={() => setIsSettingsOpen(true)} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       <main className="flex-1 max-w-3xl mx-auto w-full p-4 pb-24">
         
@@ -137,7 +192,7 @@ function App() {
         </button>
 
         {/* Step 3: Result */}
-        {result && <ResultCard result={result} platform={platform} />}
+        {result && <ResultCard result={result} platform={platform} isGeneratingImage={isGeneratingImage} />}
         
       </main>
     </div>
